@@ -7,6 +7,7 @@ const CARD_COLOR = '#fff';
 const TABLE_COLOR = '#008000';
 const BORDER_RADIUS = 8;
 const DOUBLE_CLICK_DELAY = 300; // milliseconds
+const SOLVE_SPEED = 10; // pixels per frame for animation
 
 // Define card suits and values
 const SUITS = ['♠', '♥', '♦', '♣'];
@@ -26,6 +27,12 @@ let gameResult = ''; // 'win' or 'lose'
 let isDragging = false;
 let lastClickTime = 0;
 let lastClickedCard = null;
+
+// Variables for solving animation
+let isSolving = false;
+let solvingCard = null;
+let targetX, targetY;
+let solvingFoundationIndex;
 
 // Card class to represent each card
 class Card {
@@ -131,9 +138,60 @@ function draw() {
     }
   }
   
+  // Draw solving card if any
+  if (solvingCard) {
+    solvingCard.draw();
+  }
+  
+  // Draw solve button if conditions are met
+  if (!gameResult && stock.length === 0 && waste.length === 0 && allTableauCardsFaceUp()) {
+    const buttonX = width / 2 - 50;
+    const buttonY = height - 50;
+    fill(200); // Light gray button
+    rect(buttonX, buttonY, 100, 40, 5); // Rounded rectangle
+    fill(0);
+    textAlign(CENTER, CENTER);
+    text("Solve", width / 2, buttonY + 20);
+  }
+  
   // Draw game result if any
   if (gameResult) {
     drawGameResult();
+  }
+  
+  // Handle solving animation
+  if (isSolving && solvingCard === null) {
+    const movable = findMovableCard();
+    if (movable) {
+      const { card, foundationIndex, tableauIndex } = movable;
+      tableau[tableauIndex].pop(); // Remove card from tableau
+      solvingCard = card;
+      solvingFoundationIndex = foundationIndex;
+      targetX = MARGIN + (foundationIndex + 3) * (CARD_WIDTH + CARD_SPACING);
+      targetY = MARGIN;
+    } else {
+      // No more movable cards; check if game is won
+      if (foundations.reduce((sum, f) => sum + f.length, 0) === 52) {
+        gameResult = 'win';
+      }
+      isSolving = false;
+    }
+  }
+  
+  if (solvingCard) {
+    let dx = targetX - solvingCard.x;
+    let dy = targetY - solvingCard.y;
+    let dist = sqrt(dx * dx + dy * dy);
+    if (dist < SOLVE_SPEED) {
+      solvingCard.x = targetX;
+      solvingCard.y = targetY;
+      foundations[solvingFoundationIndex].push(solvingCard);
+      solvingCard = null;
+      checkWinCondition();
+    } else {
+      solvingCard.x += (dx / dist) * SOLVE_SPEED;
+      solvingCard.y += (dy / dist) * SOLVE_SPEED;
+    }
   }
 }
 
@@ -242,9 +300,26 @@ function startNewGame() {
       tableau[i].push(card);
     }
   }
+  
+  // Reset solving state
+  isSolving = false;
+  solvingCard = null;
 }
 
 function mousePressed() {
+  if (isSolving) return; // Disable interactions during solving
+  
+  // Check if solve button is clicked
+  if (!gameResult && stock.length === 0 && waste.length === 0 && allTableauCardsFaceUp()) {
+    const buttonX = width / 2 - 50;
+    const buttonY = height - 50;
+    if (mouseX >= buttonX && mouseX <= buttonX + 100 &&
+        mouseY >= buttonY && mouseY <= buttonY + 40) {
+      isSolving = true;
+      return;
+    }
+  }
+
   // Check for double-click first
   const currentTime = millis();
   const timeSinceLastClick = currentTime - lastClickTime;
@@ -424,6 +499,8 @@ function checkWinCondition() {
 }
 
 function mouseReleased() {
+  if (isSolving) return; // Disable interactions during solving
+  
   if (!selectedCard || !isDragging) return;
   
   // Check if dropping on foundation
@@ -461,4 +538,29 @@ function keyPressed() {
   if (key === 'n' || key === 'N') {
     startNewGame();
   }
+}
+
+// Helper function to check if all tableau cards are face up
+function allTableauCardsFaceUp() {
+  for (let pile of tableau) {
+    for (let card of pile) {
+      if (!card.faceUp) return false;
+    }
+  }
+  return true;
+}
+
+// Helper function to find the next movable card to a foundation
+function findMovableCard() {
+  for (let i = 0; i < 7; i++) {
+    if (tableau[i].length > 0) {
+      const card = tableau[i][tableau[i].length - 1];
+      for (let j = 0; j < 4; j++) {
+        if (canMoveToFoundation(card, j)) {
+          return { card, foundationIndex: j, tableauIndex: i };
+        }
+      }
+    }
+  }
+  return null;
 }
