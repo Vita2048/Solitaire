@@ -4,859 +4,1308 @@
     <title>Solitaire</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.min.js"></script>
     <style>
-body {
-    margin: 0;
-    padding: 0;
-}
-
-#game-container {
-    width: 800px;
-    margin: 0 auto;
-}
-
-#buttons {
-    margin: 10px;
-    text-align: center;
-}
-
-#new-game-button, #solve-button {
-    padding: 10px 20px;
-    font-size: 16px;
-    background-color: #4CAF50; /* Green background */
-    color: white;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    margin: 0 5px; /* Space between buttons */
-}
-
-#new-game-button:hover, #solve-button:hover {
-    background-color: #45a049; /* Darker green on hover */
-}
-
-#solve-button:disabled, #new-game-button:disabled {
-    background-color: #cccccc; /* Gray when disabled */
-    cursor: not-allowed;
-}
-
+        body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; background-color: #f0f0f0; }
+        #game-container { width: 820px; margin-top: 20px; background-color: #008000; padding: 10px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        #buttons { margin-bottom: 15px; text-align: center; }
+        #new-game-button, #solve-button, #auto-play-button { padding: 10px 20px; font-size: 16px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; margin: 0 5px; transition: background-color 0.3s ease; }
+        #new-game-button:hover, #solve-button:hover, #auto-play-button:hover { background-color: #45a049; }
+        #solve-button:disabled, #new-game-button:disabled, #auto-play-button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #canvas-container { border: 1px solid #333; border-radius: 5px; }
+        #game-result-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); display: none; justify-content: center; align-items: center; z-index: 1000; }
+        #game-result-message { background-color: white; padding: 30px 50px; border-radius: 10px; text-align: center; font-size: 28px; color: #333; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
     </style>
 </head>
 <body>
     <div id="game-container">
         <div id="buttons">
-            <button id="new-game-button">New Game</button>
-            <button id="solve-button" disabled>Solve</button>
+            <button id="new-game-button">New Game (N)</button>
+            <button id="auto-play-button">Auto Play</button>
+            <button id="solve-button" disabled>Solve (S)</button>
         </div>
         <div id="canvas-container"></div>
+        <div id="game-result-overlay"><div id="game-result-message"></div></div>
     </div>
-    <div id="canvas-container"></div>
     <script>
+        // Constants
+        const CARD_SPACING = 15;
+        const MARGIN = 15;
+        const TABLE_COLOR = '#008000';
+        const BORDER_RADIUS = 8;
+        const DOUBLE_CLICK_DELAY = 300;
+        const SOLVE_SPEED = 10;
+        const SUITS = ['♠', '♥', '♦', '♣'];
+        const suitToRow = { '♦': 0, '♥': 1, '♠': 2, '♣': 3 };
+        const VALUES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+        const CARD_WIDTH = 100;
+        const CARD_HEIGHT = 142;
+        const NEW_GAME_ANIM_SPEED = 0.04;
+        const FLIGHT_ROTATION_AMOUNT = Math.PI * 1.5;
+        const STACK_OFFSET_AMOUNT = 0.2;
+        const AUTO_PLAY_DELAY = 100;
+        const MAX_UNPRODUCTIVE_MOVES = 100; // Increased for more logging
+        const MAX_STOCK_CYCLES = 1; // Stop after one unproductive cycle
 
-// Constants for card dimensions and game layout
-const CARD_SPACING = 15;
-const MARGIN = 15;
-const CARD_COLOR = '#fff';
-const TABLE_COLOR = '#008000';
-const BORDER_RADIUS = 8;
-const DOUBLE_CLICK_DELAY = 300; // milliseconds
-const SOLVE_SPEED = 10; // pixels per frame for animation
-const SUITS = ['♠', '♥', '♦', '♣'];
-const suitToRow = {
-    '♦': 0,  // Diamonds -> row 0
-    '♥': 1,  // Hearts   -> row 1
-    '♠': 2,  // Spades   -> row 2
-    '♣': 3   // Clubs    -> row 3
-};
-const VALUES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
-const CARD_WIDTH = 100;  // Canvas width, adjust as needed
-const CARD_HEIGHT = 142; // Canvas height, adjust as needed
+        // Game state variables
+        let stock = [];
+        let waste = [];
+        let foundations = [[], [], [], []];
+        let tableau = [[], [], [], [], [], [], []];
+        let selectedCard = null;
+        let draggingStack = [];
+        let dragOffset = { x: 0, y: 0 };
+        let dragSource = null;
+        let gameResult = '';
+        let isDragging = false;
+        let lastClickTime = 0;
+        let lastClickedCard = null;
+        let isSolving = false;
+        let solvingCard = null;
+        let targetX, targetY;
+        let solvingFoundationIndex;
+        let isAnimatingNewGame = false;
+        let animationPhase = 'none';
+        let allCardsForAnimation = [];
+        let animationProgress = 0;
+        let canvas;
+        let cardsImg;
+        let isAutoPlaying = false;
+        let currentAnimation = null;
+        let autoPlayButton;
+        let autoPlayTimeout = null;
 
-// --- Animation Constants ---
-const NEW_GAME_ANIM_SPEED = 0.04; // SLOWER: Animation speed factor (0 to 1)
-let STACK_X; // Center X for stacking (defined in setup)
-let STACK_Y; // Center Y for stacking (defined in setup)
-const FLIGHT_ROTATION_AMOUNT = Math.PI * 1.5; // Max rotation during flight (radians)
-const STACK_OFFSET_AMOUNT = 0.2; // How much cards are offset in the stack visually
+        // Loop Detection Variables
+        let movesWithoutProgress = 0;
+        let stockCycles = 0;
+        let lastWasteFlipState = -1;
+        let lastAutoPlayMove = null;
+		let moveHistory = [];
+		const MAX_HISTORY = 10; // Limit history to prevent excessive memory use		
 
+        // Positioning Variables
+        let STACK_X, STACK_Y;
 
-// Game state variables
-let deck = [];
-let stock = [];
-let waste = [];
-let foundations = [[], [], [], []];
-let tableau = [[], [], [], [], [], [], []];
-let selectedCard = null;
-let draggingStack = [];
-let dragOffset = { x: 0, y: 0 };
-let dragSource = null;
-let gameResult = ''; // 'win' or 'lose' or 'stuck'
-let isDragging = false;
-let lastClickTime = 0;
-let lastClickedCard = null;
+        function preload() {
+            cardsImg = loadImage('https://vita2048.github.io/Solitaire/Cards.jpg', () => console.log("Card image loaded."), (e) => console.error("Error loading card image:", e));
+        }
 
-// Variables for solving animation
-let isSolving = false;
-let solvingCard = null;
-let targetX, targetY;
-let solvingFoundationIndex;
-
-// Variables for New Game Animation
-let isAnimatingNewGame = false;
-let animationPhase = 'none'; // 'none', 'flying_to_stack', 'dealing_from_stack'
-let allCardsForAnimation = [];
-let animationProgress = 0; // Progress for the current phase (0 to 1)
-let canvas; // Reference to the p5 canvas
-
-// Add global variable for the card image
-let cardsImg;
-
-// Preload the card image
-function preload() {
-    cardsImg = loadImage('https://vita2048.github.io/Solitaire/Cards.jpg');
-}
-
-// Mapping from suit symbols to row indices in the image
-
-
-// Card class to represent each card
-class Card {
-    constructor(suit, value, faceUp = false) {
-        this.suit = suit;
-        this.value = value;
-        this.faceUp = faceUp;
-        this.x = 0; // Current visual x
-        this.y = 0; // Current visual y
-        this.color = (this.suit === '♥' || this.suit === '♦') ? 'red' : 'black';
-
-        // Animation properties
-        this.animStartX = 0;
-        this.animStartY = 0;
-        this.animTargetX = 0;
-        this.animTargetY = 0;
-        this.animRotation = 0; // Current visual rotation
-        this.animStartRotation = 0;
-        this.animTargetRotation = 0;
-        this.finalGameX = 0; // Store the final game position
-        this.finalGameY = 0;
-        this.stackOrder = 0; // Used for slight offset in stack
-    }
-
-    // Modified draw method to use card images
-    draw() {
-        push(); // Isolate transformations
-        translate(this.x + CARD_WIDTH / 2, this.y + CARD_HEIGHT / 2); // Move origin to card center
-        rotate(this.animRotation); // Apply current animated rotation
-        translate(-CARD_WIDTH / 2, -CARD_HEIGHT / 2); // Move origin back
-
-        if (this.faceUp || isAnimatingNewGame) {
-            // Calculate the source coordinates in the image
-			let row = suitToRow[this.suit];
-			let rankIndex = VALUES.indexOf(this.value); // 0 for 'A', 12 for 'K'
-			let column = 12 - rankIndex; // Reverse: 'K' to column 0, 'A' to column 12
-			let sx = 195 + column * 382;
-			let sy = 451 + row * 719;
-			image(cardsImg, 0, 0, CARD_WIDTH, CARD_HEIGHT, sx, sy, 348, 497);
-        } else {
-            // Draw card back (unchanged)
-            fill(85, 107, 47); // Dark green
-            stroke(0);
-            strokeWeight(1);
-            rect(0, 0, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
-
-            // Simple pattern for card back
-            stroke(255, 255, 255, 100);
-            for (let i = 10; i < CARD_WIDTH; i += 10) {
-                line(i, 10, i, CARD_HEIGHT - 10);
+        class Card {
+            constructor(suit, value, faceUp = false) {
+                this.suit = suit;
+                this.value = value;
+                this.faceUp = faceUp;
+                this.x = 0;
+                this.y = 0;
+                this.color = (this.suit === '♥' || this.suit === '♦') ? 'red' : 'black';
+                this.animStartX = 0;
+                this.animStartY = 0;
+                this.animTargetX = 0;
+                this.animTargetY = 0;
+                this.animRotation = 0;
+                this.animStartRotation = 0;
+                this.animTargetRotation = 0;
+                this.finalGameX = 0;
+                this.finalGameY = 0;
+                this.stackOrder = 0;
             }
-            for (let i = 10; i < CARD_HEIGHT; i += 10) {
-                line(10, i, CARD_WIDTH - 10, i);
-            }
-        }
-        pop(); // Restore transformations
-    }
-
-    containsPoint(px, py) {
-        // Simple bounding box check (ignores rotation for clicking efficiency)
-        return px >= this.x && px <= this.x + CARD_WIDTH &&
-               py >= this.y && py <= this.y + CARD_HEIGHT;
-    }
-
-    clone() {
-        const card = new Card(this.suit, this.value, this.faceUp);
-        card.x = this.x;
-        card.y = this.y;
-        card.finalGameX = this.finalGameX;
-        card.finalGameY = this.finalGameY;
-        return card;
-    }
-
-    updateAnimation() {
-        const smoothProgress = (1 - cos(animationProgress * PI)) / 2;
-        this.x = lerp(this.animStartX, this.animTargetX, smoothProgress);
-        this.y = lerp(this.animStartY, this.animTargetY, smoothProgress);
-        this.animRotation = lerp(this.animStartRotation, this.animTargetRotation, smoothProgress);
-    }
-}
-
-// The rest of the code (setup, draw, and all other functions) remains unchanged
-function setup() {
-    canvas = createCanvas(820, 600);
-    canvas.parent('canvas-container');
-    textFont('Arial');
-
-    STACK_X = width / 2 - CARD_WIDTH / 2;
-    STACK_Y = height / 2 - CARD_HEIGHT / 2;
-
-    const newGameButton = select('#new-game-button');
-    if (newGameButton) {
-        newGameButton.mousePressed(triggerNewGameAnimation);
-    } else {
-        console.error("New Game button not found!");
-    }
-
-    const solveButton = select('#solve-button');
-    if (solveButton) {
-        solveButton.mousePressed(() => {
-            gameResult = '';
-            isSolving = true;
-        });
-    } else {
-        console.error("Solve button not found!");
-    }
-
-    startNewGame(false);
-}
-
-function draw() {
-    background(TABLE_COLOR);
-
-    if (isAnimatingNewGame) {
-        animateNewGame();
-        return;
-    }
-
-    drawPlaceholders();
-    drawStock();
-    drawWaste();
-    drawFoundations();
-    drawTableau();
-
-    if (isDragging && draggingStack.length > 0) {
-        for (let i = 0; i < draggingStack.length; i++) {
-            const card = draggingStack[i];
-            const drawX = mouseX - dragOffset.x;
-            const drawY = mouseY - dragOffset.y + i * 20;
-            drawCardAt(card, drawX, drawY);
-        }
-    }
-
-    if (solvingCard) {
-        solvingCard.draw();
-    }
-
-    const solveButton = select('#solve-button');
-    if (solveButton) {
-        const canSolve = !gameResult && stock.length === 0 && waste.length === 0 && allTableauCardsFaceUp();
-        solveButton.elt.disabled = !canSolve;
-    }
-
-    if (gameResult) {
-        drawGameResult();
-    }
-
-    if (isSolving) {
-        updateSolvingAnimation();
-    }
-}
-
-function drawCardAt(card, x, y) {
-    const originalX = card.x;
-    const originalY = card.y;
-    const originalRot = card.animRotation;
-    card.x = x;
-    card.y = y;
-    card.animRotation = 0;
-    card.draw();
-    card.x = originalX;
-    card.y = originalY;
-    card.animRotation = originalRot;
-}
-
-function triggerNewGameAnimation() {
-    if (isAnimatingNewGame) return;
-
-    isAnimatingNewGame = true;
-    animationPhase = 'flying_to_stack';
-    animationProgress = 0;
-    gameResult = '';
-    isSolving = false;
-    solvingCard = null;
-
-    allCardsForAnimation = [];
-    stock.forEach(card => allCardsForAnimation.push(card));
-    waste.forEach(card => allCardsForAnimation.push(card));
-    foundations.forEach(pile => pile.forEach(card => allCardsForAnimation.push(card)));
-    tableau.forEach(pile => pile.forEach(card => allCardsForAnimation.push(card)));
-
-    if (allCardsForAnimation.length !== 52) {
-        console.warn("Card count mismatch before animation:", allCardsForAnimation.length);
-        allCardsForAnimation = [];
-        for (let suit of SUITS) {
-            for (let value of VALUES) {
-                allCardsForAnimation.push(new Card(suit, value, true));
-            }
-        }
-        allCardsForAnimation.forEach(card => {
-            card.x = MARGIN; card.y = MARGIN;
-        });
-    }
-
-    allCardsForAnimation.forEach((card, index) => {
-        card.animStartX = card.x;
-        card.animStartY = card.y;
-        card.animStartRotation = card.animRotation;
-
-        card.stackOrder = index;
-        card.animTargetX = STACK_X + (index - 26) * STACK_OFFSET_AMOUNT;
-        card.animTargetY = STACK_Y + (index - 26) * STACK_OFFSET_AMOUNT;
-        card.animTargetRotation = random(-FLIGHT_ROTATION_AMOUNT, FLIGHT_ROTATION_AMOUNT);
-
-        card.faceUp = true;
-    });
-
-    shuffle(allCardsForAnimation, true);
-
-    stock = [];
-    waste = [];
-    foundations = [[], [], [], []];
-    tableau = [[], [], [], [], [], [], []];
-}
-
-function animateNewGame() {
-    background(TABLE_COLOR);
-
-    animationProgress += NEW_GAME_ANIM_SPEED;
-    animationProgress = min(animationProgress, 1);
-
-    allCardsForAnimation.forEach(card => {
-        card.updateAnimation();
-        card.draw();
-    });
-
-    if (animationProgress >= 1) {
-        if (animationPhase === 'flying_to_stack') {
-            animationPhase = 'dealing_from_stack';
-            animationProgress = 0;
-
-            startNewGame(true);
-
-            allCardsForAnimation.forEach(card => {
-                card.animStartX = card.x;
-                card.animStartY = card.y;
-                card.animStartRotation = card.animRotation;
-
-                card.animTargetX = card.finalGameX;
-                card.animTargetY = card.finalGameY;
-                card.animTargetRotation = 0;
-            });
-        } else if (animationPhase === 'dealing_from_stack') {
-            isAnimatingNewGame = false;
-            animationPhase = 'none';
-            finalizeNewGameState();
-        }
-    }
-}
-
-function finalizeNewGameState() {
-    allCardsForAnimation.forEach(card => {
-        card.x = card.finalGameX;
-        card.y = card.finalGameY;
-        card.animRotation = 0;
-    });
-
-    stock.forEach(card => card.faceUp = false);
-    waste.forEach(card => card.faceUp = true);
-    for(let i = 0; i < 7; i++) {
-        if (tableau[i].length > 0) {
-            tableau[i].forEach((card, j) => {
-                card.faceUp = (j === tableau[i].length - 1);
-            });
-        }
-    }
-    foundations.forEach(pile => pile.forEach(card => card.faceUp = true));
-
-    allCardsForAnimation = [];
-}
-
-function drawPlaceholders() {
-    fill(16, 74, 28, 150);
-    noStroke();
-
-    rect(MARGIN, MARGIN, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
-    rect(MARGIN + CARD_WIDTH + CARD_SPACING, MARGIN, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
-    for (let i = 0; i < 4; i++) {
-        rect(MARGIN + (i + 3) * (CARD_WIDTH + CARD_SPACING), MARGIN, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
-    }
-    for (let i = 0; i < 7; i++) {
-        rect(MARGIN + i * (CARD_WIDTH + CARD_SPACING), MARGIN + CARD_HEIGHT + CARD_SPACING, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
-    }
-    stroke(0);
-}
-
-function drawStock() {
-    if (stock.length > 0) {
-        const card = stock[stock.length - 1];
-        card.x = MARGIN;
-        card.y = MARGIN;
-        if (!isAnimatingNewGame) card.draw();
-    }
-}
-
-function drawWaste() {
-    if (waste.length > 0 && !isCardBeingDragged(waste[waste.length - 1])) {
-        const card = waste[waste.length - 1];
-        card.x = MARGIN + CARD_WIDTH + CARD_SPACING;
-        card.y = MARGIN;
-        if (!isAnimatingNewGame) card.draw();
-    }
-}
-
-function drawFoundations() {
-    for (let i = 0; i < 4; i++) {
-        if (foundations[i].length > 0 && !isCardBeingDragged(foundations[i][foundations[i].length - 1])) {
-            const card = foundations[i][foundations[i].length - 1];
-            card.x = MARGIN + (i + 3) * (CARD_WIDTH + CARD_SPACING);
-            card.y = MARGIN;
-            if (!isAnimatingNewGame) card.draw();
-        }
-    }
-}
-
-function drawTableau() {
-    for (let i = 0; i < 7; i++) {
-        for (let j = 0; j < tableau[i].length; j++) {
-            const card = tableau[i][j];
-            card.x = MARGIN + i * (CARD_WIDTH + CARD_SPACING);
-            card.y = MARGIN + CARD_HEIGHT + CARD_SPACING + j * 20;
-            if (!isAnimatingNewGame && !isCardBeingDragged(card)) {
-                card.draw();
-            }
-        }
-    }
-}
-
-function isCardBeingDragged(card) {
-    return isDragging && draggingStack.includes(card);
-}
-
-function drawGameResult() {
-    fill(0, 0, 0, 200);
-    rect(0, height / 2 - 50, width, 100);
-
-    fill(255);
-    textAlign(CENTER, CENTER);
-    textSize(32);
-    text(gameResult === 'win' ? 'Congratulations! You Win!' : (gameResult === 'stuck' ? 'No more moves!' : 'Game Over'), width / 2, height / 2);
-}
-
-function startNewGame(isCalledForAnimation = false) {
-    gameResult = '';
-    isSolving = false;
-    solvingCard = null;
-
-    let deckToUse;
-    if (isCalledForAnimation) {
-        deckToUse = [...allCardsForAnimation];
-        for (let i = deckToUse.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [deckToUse[i], deckToUse[j]] = [deckToUse[j], deckToUse[i]];
-        }
-    } else {
-        deck = [];
-        for (let suit of SUITS) {
-            for (let value of VALUES) {
-                deck.push(new Card(suit, value));
-            }
-        }
-        for (let i = deck.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [deck[i], deck[j]] = [deck[j], deck[i]];
-        }
-        deckToUse = deck;
-    }
-
-    stock = [];
-    waste = [];
-    foundations = [[], [], [], []];
-    tableau = [[], [], [], [], [], [], []];
-
-    stock = [...deckToUse];
-
-    for (let i = 0; i < 7; i++) {
-        for (let j = 0; j <= i; j++) {
-            if (stock.length === 0) break;
-            const card = stock.pop();
-            card.faceUp = (j === i);
-            tableau[i].push(card);
-        }
-    }
-
-    stock.forEach((card) => {
-        const finalX = MARGIN;
-        const finalY = MARGIN;
-        if (isCalledForAnimation) {
-            card.finalGameX = finalX;
-            card.finalGameY = finalY;
-        } else {
-            card.x = finalX;
-            card.y = finalY;
-            card.faceUp = false;
-        }
-    });
-
-    for (let i = 0; i < 7; i++) {
-        for (let j = 0; j < tableau[i].length; j++) {
-            const card = tableau[i][j];
-            const finalX = MARGIN + i * (CARD_WIDTH + CARD_SPACING);
-            const finalY = MARGIN + CARD_HEIGHT + CARD_SPACING + j * 20;
-            const isFaceUp = (j === tableau[i].length - 1);
-
-            if (isCalledForAnimation) {
-                card.finalGameX = finalX;
-                card.finalGameY = finalY;
-            } else {
-                card.x = finalX;
-                card.y = finalY;
-                card.faceUp = isFaceUp;
-            }
-        }
-    }
-}
-
-function updateSolvingAnimation() {
-    if (isSolving && solvingCard === null) {
-        const movable = findMovableCard();
-        if (movable) {
-            const { card, foundationIndex, sourcePile } = movable;
-
-            if(sourcePile === waste){
-                waste.pop();
-            } else if (tableau.includes(sourcePile)){
-                sourcePile.pop();
-                if (sourcePile.length > 0 && !sourcePile[sourcePile.length - 1].faceUp) {
-                    sourcePile[sourcePile.length - 1].faceUp = true;
-                }
-            } else if (foundations.includes(sourcePile)){
-                console.warn("Solver trying to move card from foundation?");
-                isSolving = false;
-                return;
-            }
-
-            solvingCard = card;
-            solvingFoundationIndex = foundationIndex;
-            targetX = MARGIN + (foundationIndex + 3) * (CARD_WIDTH + CARD_SPACING);
-            targetY = MARGIN;
-        } else {
-            if (foundations.reduce((sum, f) => sum + f.length, 0) === 52) {
-                gameResult = 'win';
-            } else {
-                gameResult = 'stuck';
-            }
-            isSolving = false;
-        }
-    }
-
-    if (solvingCard) {
-        let dx = targetX - solvingCard.x;
-        let dy = targetY - solvingCard.y;
-        let distSq = dx * dx + dy * dy;
-        if (distSq < SOLVE_SPEED * SOLVE_SPEED) {
-            solvingCard.x = targetX;
-            solvingCard.y = targetY;
-            foundations[solvingFoundationIndex].push(solvingCard);
-            solvingCard.faceUp = true;
-            solvingCard = null;
-            checkWinCondition();
-        } else {
-            let dist = sqrt(distSq);
-            solvingCard.x += (dx / dist) * SOLVE_SPEED;
-            solvingCard.y += (dy / dist) * SOLVE_SPEED;
-        }
-    }
-}
-
-function mousePressed() {
-    if (isSolving || isAnimatingNewGame) return;
-
-    const currentTime = millis();
-    const timeSinceLastClick = currentTime - lastClickTime;
-    let clickedCardInfo = findClickedCard(mouseX, mouseY);
-
-    if (clickedCardInfo && clickedCardInfo.card.faceUp && lastClickedCard === clickedCardInfo.card && timeSinceLastClick < DOUBLE_CLICK_DELAY) {
-        let sourcePile = clickedCardInfo.source;
-        let isTopCard = false;
-        if(sourcePile === waste && sourcePile.length > 0 && sourcePile[sourcePile.length - 1] === clickedCardInfo.card) isTopCard = true;
-        if(tableau.includes(sourcePile) && sourcePile.length > 0 && sourcePile[sourcePile.length - 1] === clickedCardInfo.card) isTopCard = true;
-
-        if (isTopCard && attemptMoveToFoundation(clickedCardInfo.card, sourcePile)) {
-            lastClickedCard = null;
-            return;
-        }
-    }
-
-    lastClickTime = currentTime;
-    lastClickedCard = clickedCardInfo ? clickedCardInfo.card : null;
-
-    const stockX = MARGIN; const stockY = MARGIN;
-    if (mouseX >= stockX && mouseX <= stockX + CARD_WIDTH && mouseY >= stockY && mouseY <= stockY + CARD_HEIGHT) {
-        if (stock.length > 0) {
-            const card = stock.pop();
-            card.faceUp = true;
-            waste.push(card);
-            return;
-        } else if (waste.length > 0) {
-            while (waste.length > 0) {
-                const card = waste.pop();
-                card.faceUp = false;
-                stock.push(card);
-            }
-            return;
-        }
-    }
-
-    if (clickedCardInfo && clickedCardInfo.card.faceUp) {
-        selectedCard = clickedCardInfo.card;
-        dragSource = clickedCardInfo.source;
-        isDragging = true;
-        dragOffset.x = mouseX - selectedCard.x;
-        dragOffset.y = mouseY - selectedCard.y;
-
-        if (tableau.includes(dragSource)) {
-            const cardIndex = dragSource.indexOf(selectedCard);
-            draggingStack = dragSource.slice(cardIndex);
-        } else if (dragSource === waste && waste.length > 0 && waste[waste.length - 1] === selectedCard) {
-            draggingStack = [selectedCard];
-        } else if (foundations.includes(dragSource) && dragSource.length > 0 && dragSource[dragSource.length - 1] === selectedCard) {
-            draggingStack = [selectedCard];
-        } else {
-            draggingStack = [];
-            isDragging = false;
-            selectedCard = null;
-        }
-    } else {
-        selectedCard = null;
-        draggingStack = [];
-        isDragging = false;
-    }
-}
-
-function findClickedCard(px, py) {
-    if (waste.length > 0) {
-        const card = waste[waste.length - 1];
-        const wx = MARGIN + CARD_WIDTH + CARD_SPACING;
-        const wy = MARGIN;
-        if (px >= wx && px <= wx + CARD_WIDTH && py >= wy && py <= wy + CARD_HEIGHT) {
-            return { card: card, source: waste };
-        }
-    }
-
-    for (let i = 0; i < 4; i++) {
-        if (foundations[i].length > 0) {
-            const card = foundations[i][foundations[i].length - 1];
-            const fx = MARGIN + (i + 3) * (CARD_WIDTH + CARD_SPACING);
-            const fy = MARGIN;
-            if (px >= fx && px <= fx + CARD_WIDTH && py >= fy && py <= fy + CARD_HEIGHT) {
-                return { card: card, source: foundations[i] };
-            }
-        }
-    }
-
-    for (let i = 6; i >= 0; i--) {
-        for (let j = tableau[i].length - 1; j >= 0; j--) {
-            const card = tableau[i][j];
-            const tpx = MARGIN + i * (CARD_WIDTH + CARD_SPACING);
-            const tpy = MARGIN + CARD_HEIGHT + CARD_SPACING + j * 20;
-            const cardEndY = tpy + (j === tableau[i].length - 1 ? CARD_HEIGHT : 20);
-
-            if (px >= tpx && px <= tpx + CARD_WIDTH && py >= tpy && py <= cardEndY) {
-                if (card.faceUp) {
-                    return { card: card, source: tableau[i] };
+            draw() {
+                push();
+                translate(this.x + CARD_WIDTH / 2, this.y + CARD_HEIGHT / 2);
+                rotate(this.animRotation);
+                translate(-CARD_WIDTH / 2, -CARD_HEIGHT / 2);
+                if (this.faceUp || isAnimatingNewGame) {
+                    let r = suitToRow[this.suit];
+                    let i = VALUES.indexOf(this.value);
+                    let c = 12 - i;
+                    let sx = 195 + c * 382;
+                    let sy = 451 + r * 719;
+                    image(cardsImg, 0, 0, CARD_WIDTH, CARD_HEIGHT, sx, sy, 348, 497);
                 } else {
-                    break;
+                    fill(85, 107, 47);
+                    stroke(0);
+                    strokeWeight(1);
+                    rect(0, 0, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
+                    stroke(255, 255, 255, 100);
+                    for (let i = 10; i < CARD_WIDTH; i += 10) line(i, 10, i, CARD_HEIGHT - 10);
+                    for (let i = 10; i < CARD_HEIGHT; i += 10) line(10, i, CARD_WIDTH - 10, i);
                 }
+                pop();
+            }
+            containsPoint(px, py) {
+                return px >= this.x && px <= this.x + CARD_WIDTH && py >= this.y && py <= this.y + CARD_HEIGHT;
+            }
+            updateAnimation() {
+                const p = (1 - cos(animationProgress * PI)) / 2;
+                this.x = lerp(this.animStartX, this.animTargetX, p);
+                this.y = lerp(this.animStartY, this.animTargetY, p);
+                this.animRotation = lerp(this.animStartRotation, this.animTargetRotation, p);
             }
         }
-    }
 
-    return null;
-}
+        // --- Auto Play Logic ---
 
-function attemptMoveToFoundation(card, source) {
-    for (let i = 0; i < 4; i++) {
-        if (canMoveToFoundation(card, i)) {
-            if (source === waste) {
-                waste.pop();
-            } else if (tableau.includes(source)) {
-                source.pop();
-                if (source.length > 0 && !source[source.length - 1].faceUp) {
-                    source[source.length - 1].faceUp = true;
+        // Helper function to check if a list of cards forms a valid stack
+        function isValidStack(cards) {
+            if (cards.length === 0) return false;
+            for (let i = 1; i < cards.length; i++) {
+                const prev = cards[i - 1];
+                const curr = cards[i];
+                const prevIdx = VALUES.indexOf(prev.value);
+                const currIdx = VALUES.indexOf(curr.value);
+                if (currIdx !== prevIdx - 1 || prev.color === curr.color) {
+                    return false;
                 }
-            } else {
-                return false;
             }
-
-            foundations[i].push(card);
-            card.faceUp = true;
-            checkWinCondition();
             return true;
         }
-    }
-    return false;
+
+        // Helper function to log game state
+        function logGameState(context) {
+            console.log(`Game State (${context}):`);
+            console.log(`Stock: ${stock.length} cards`);
+            console.log(`Waste: ${waste.length > 0 ? waste.map(c => `${c.value}${c.suit}`).join(', ') : 'empty'}`);
+            console.log(`Foundations: ${foundations.map((f, i) => `F${i}: ${f.length > 0 ? f[f.length - 1].value + f[f.length - 1].suit : 'empty'}`).join(', ')}`);
+            console.log(`Tableau:`);
+            tableau.forEach((pile, i) => {
+                console.log(`  Pile ${i}: ${pile.length > 0 ? pile.map(c => `${c.value}${c.suit}${c.faceUp ? '' : '(down)'}`).join(', ') : 'empty'}`);
+            });
+        }
+
+        // Main function to find productive moves
+// Helper: Check if two cards have opposite colors
+function isOppositeColor(card1, card2) {
+    const redSuits = ['♥', '♦'];
+    return redSuits.includes(card1.suit) !== redSuits.includes(card2.suit);
 }
 
+// Helper: Get card's numerical value
+function getCardValue(card) {
+    const values = { 'A': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13 };
+    return values[card.value];
+}
+
+// Helper: Verify a stack is a valid sequence
+function isValidStack(cards) {
+     if (!cards || cards.length === 0) return false; // Should not happen if called correctly
+     // Stacks must be face up
+     if (!cards.every(c => c.faceUp)) {
+          //console.log("Stack invalid: contains face-down cards");
+          return false;
+     }
+     for (let i = 1; i < cards.length; i++) {
+         const prev = cards[i - 1];
+         const curr = cards[i];
+         const prevIdx = getCardValue(prev); // Use getCardValue helper
+         const currIdx = getCardValue(curr); // Use getCardValue helper
+         if (currIdx !== prevIdx - 1 || !isOppositeColor(prev, curr)) { // Use isOppositeColor helper
+             //console.log(`Stack invalid at ${curr.value}${curr.suit} following ${prev.value}${prev.suit}`);
+             return false;
+         }
+     }
+     //console.log(`Stack starting ${cards[0].value}${cards[0].suit} is valid.`);
+     return true;
+}
+
+// Helper: Check if a card/stack can move to a tableau pile (assumed existing function)
+function canMoveToTableau(card, pileIndex) {
+    const targetPile = tableau[pileIndex];
+    if (targetPile.length === 0) return card.value === 'K'; // Empty pile accepts King
+    const topCard = targetPile[targetPile.length - 1];
+    return topCard.faceUp && isOppositeColor(card, topCard) && getCardValue(card) === getCardValue(topCard) - 1;
+}
+
+// Helper: Check if a card can move to foundation (assumed existing function)
 function canMoveToFoundation(card, foundationIndex) {
     const foundation = foundations[foundationIndex];
-    if (foundation.length === 0) {
-        return card.value === 'A';
-    } else {
-        const topCard = foundation[foundation.length - 1];
-        const nextValueIndex = VALUES.indexOf(topCard.value) + 1;
-        return card.suit === topCard.suit &&
-               nextValueIndex < VALUES.length &&
-               card.value === VALUES[nextValueIndex];
-    }
+    if (foundation.length === 0) return card.value === 'A';
+    const topCard = foundation[foundation.length - 1];
+    return card.suit === topCard.suit && getCardValue(card) === getCardValue(topCard) + 1;
 }
 
-function canMoveToTableau(card, tableauPileIndex) {
-    const pile = tableau[tableauPileIndex];
-    if (pile.length === 0) {
-        return card.value === 'K';
-    } else {
-        const topCard = pile[pile.length - 1];
-        if (!topCard.faceUp) return false;
-
-        const targetValueIndex = VALUES.indexOf(topCard.value);
-        const sourceValueIndex = VALUES.indexOf(card.value);
-
-        return card.color !== topCard.color && sourceValueIndex === targetValueIndex - 1;
+// Updated function to find productive moves
+function findMovableKingStack() {
+    for (let i = 0; i < 7; i++) {
+        const pile = tableau[i];
+        if (pile.length > 0) {
+            const faceUpStart = pile.findIndex(card => card.faceUp);
+            if (faceUpStart !== -1) { // Ensure there are face-up cards
+                 const stack = pile.slice(faceUpStart);
+                 if (stack[0].value === 'K') {
+                     // Check if this stack is movable *as a whole* (valid sequence)
+                     if (isValidStack(stack)) { // Assuming isValidStack checks sequence rules
+                         return { sourcePileIndex: i, stack: stack };
+                     }
+                 }
+            }
+        }
     }
+    return null; // No movable King stack found
 }
 
-function checkWinCondition() {
-    if (foundations.reduce((sum, f) => sum + f.length, 0) === 52) {
-        gameResult = 'win';
-        isSolving = false;
+
+// --- MODIFIED: findProductiveMove ---
+// Add logic to check for moves that empty a pile strategically
+function findProductiveMove() {
+    console.log("Checking for productive moves (enhanced)...");
+
+    // Priority 1: Waste to Foundation
+    if (waste.length > 0) {
+        const card = waste[waste.length - 1];
+        for (let i = 0; i < 4; i++) {
+            if (canMoveToFoundation(card, i)) {
+                console.log(`Found productive move: ${card.value}${card.suit} from waste to foundation ${i}`);
+                return { type: 'moveToFoundation', card, source: waste, targetFoundation: i, isProgress: true, priority: 1 };
+            }
+        }
     }
+
+    // Priority 2: Tableau Top Card to Foundation
+	for (let i = 0; i < 7; i++) {
+		const pile = tableau[i];
+		if (pile.length > 0 && pile[pile.length - 1].faceUp) {
+			const card = pile[pile.length - 1];
+			for (let j = 0; j < 4; j++) {
+				if (canMoveToFoundation(card, j)) {
+					console.log(`Found productive move: ${card.value}${card.suit} from pile ${i} to foundation ${j}`);
+					return {
+						type: 'moveToFoundation',
+						card: card,
+						source: pile,
+						targetFoundation: j, // Standardize on targetFoundation
+						isProgress: true,
+						priority: 2
+					};
+				}
+			}
+		}
+	}
+
+    // Priority 3: Waste to Tableau
+    if (waste.length > 0) {
+        const card = waste[waste.length - 1];
+        for (let i = 0; i < 7; i++) {
+            if (canMoveToTableau(card, i)) {
+                console.log(`Found potential waste->tableau move: ${card.value}${card.suit} to pile ${i}`);
+                return { type: 'moveToTableau', card, source: waste, targetPile: tableau[i], isProgress: false, priority: 3 };
+            }
+        }
+    }
+
+    // Priority 4: Tableau to Tableau (Uncovering Face-Down Cards)
+    for (let i = 0; i < 7; i++) {
+        const pile = tableau[i];
+        if (pile.length > 0) {
+            const faceUpStart = pile.findIndex(card => card.faceUp);
+            if (faceUpStart > 0) { // Moving this stack will uncover a card
+                const stack = pile.slice(faceUpStart);
+                if (isValidStack(stack)) {
+                    for (let j = 0; j < 7; j++) {
+                        if (i !== j && canMoveStackToTableau(stack, j)) {
+                            console.log(`Found productive move: stack starting with ${stack[0].value}${stack[0].suit} from pile ${i} to pile ${j} (uncovers card)`);
+                            return { type: 'moveStackToTableau', stack, source: pile, targetPile: tableau[j], isProgress: true, priority: 4 };
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Priority 5: Tableau to Tableau (Non-uncovering, non-strategic)
+    for (let i = 0; i < 7; i++) {
+        const pile = tableau[i];
+        if (pile.length > 0) {
+            const faceUpStart = pile.findIndex(card => card.faceUp);
+            if (faceUpStart === 0 && pile.length > 0) { // Only consider fully face-up stacks that don't uncover
+                const stack = pile.slice(faceUpStart);
+                if (isValidStack(stack)) {
+                    for (let j = 0; j < 7; j++) {
+                        if (i !== j && canMoveStackToTableau(stack, j)) {
+                            // Avoid moving single Kings from non-empty piles unless strategic
+                            if (stack.length === 1 && stack[0].value === 'K') continue;
+                            // Skip moving king stacks to empty piles here (handled elsewhere)
+                            if (stack[0].value === 'K' && tableau[j].length === 0) continue;
+                            console.log(`Found non-uncovering move: stack ${stack[0].value}${stack[0].suit} from pile ${i} to pile ${j}`);
+                            return { type: 'moveStackToTableau', stack, source: pile, targetPile: tableau[j], isProgress: false, priority: 5 };
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    console.log("No productive moves found in this check.");
+    return null;
 }
 
-function mouseReleased() {
-    if (isSolving || isAnimatingNewGame || !isDragging || draggingStack.length === 0) {
-        isDragging = false;
-        draggingStack = [];
+
+// Helper Function to Validate Stack Moves
+function canMoveStackToTableau(stack, targetPileIndex) {
+    if (stack.length === 0) return false;
+    const bottomCard = stack[0];
+    const targetPile = tableau[targetPileIndex];
+    if (targetPile.length === 0) {
+        return bottomCard.value === 'K'; // Only Kings can move to empty piles
+    }
+    const topCard = targetPile[targetPile.length - 1];
+    return isOppositeColor(bottomCard, topCard) && getCardValue(bottomCard) === getCardValue(topCard) - 1;
+}
+
+function findKingToEmptyTableau() {
+    console.log("Checking for King to EXISTING empty tableau...");
+    const emptyPileIndex = tableau.findIndex(pile => pile.length === 0);
+    if (emptyPileIndex === -1) {
+        console.log("No existing empty tableau pile found.");
+        return null;
+    }
+
+    // Check Tableau King Stacks that uncover a card
+    for (let i = 0; i < 7; i++) {
+        const pile = tableau[i];
+        if (pile.length > 0) {
+            const faceUpStart = pile.findIndex(card => card.faceUp);
+            if (faceUpStart > 0) { // Only consider moves that uncover a face-down card
+                const stack = pile.slice(faceUpStart);
+                if (stack[0].value === 'K' && isValidStack(stack)) {
+                    console.log(`Found King stack move: ${stack[0].value}${stack[0].suit} from pile ${i} to empty pile ${emptyPileIndex} (uncovers: true)`);
+                    return {
+                        type: 'moveStackToTableau',
+                        stack: stack,
+                        source: pile,
+                        targetPile: tableau[emptyPileIndex],
+                        isProgress: true,
+                        priority: 4
+                    };
+                }
+            }
+        }
+    }
+
+    console.log("No productive King-to-empty move found.");
+    return null;
+}
+
+        // Updated main auto-play decision logic
+function findNextAutoMove() {
+    console.log("Finding next auto-play move (prioritized)...");
+    logGameState("Before move evaluation");
+
+    let possibleMoves = [];
+
+    // 1. Find all potentially productive moves
+    const productiveMove = findProductiveMove(); // This now includes strategic emptying
+    if (productiveMove) {
+        possibleMoves.push(productiveMove);
+    }
+
+    // 2. Find King-to-existing-empty moves
+    const kingMove = findKingToEmptyTableau();
+    if (kingMove) {
+        possibleMoves.push(kingMove);
+    }
+
+    // Sort moves by priority (lower number is higher priority)
+    possibleMoves.sort((a, b) => a.priority - b.priority);
+
+    // Select the highest priority move found
+    if (possibleMoves.length > 0) {
+         const bestMove = possibleMoves[0];
+         console.log(`Selected move (Priority ${bestMove.priority}): ${bestMove.type}`);
+         return bestMove;
+    }
+
+    // 3. If no tableau/foundation moves, draw from stock
+    if (stock.length > 0) {
+        console.log("No tableau/foundation moves found — drawing from stock.");
+        // Note: Drawing doesn't have a priority here, it's the fallback
+        return { type: 'draw', isProgress: false };
+    }
+
+    // 4. If stock is empty, check waste cycle
+    if (waste.length > 0) {
+        if (stockCycles < MAX_STOCK_CYCLES) {
+             if (lastWasteFlipState !== waste.length) { // Allow one full cycle after last progress
+                 console.log("Flipping waste back to stock.");
+                 stockCycles++;
+                 lastWasteFlipState = waste.length; // Record state before flip
+                 movesWithoutProgress = 0; // Reset counter for the new cycle
+                 return { type: 'flipWasteToStock', isProgress: false };
+             } else {
+                 console.log("Stuck in waste cycle.");
+             }
+        } else {
+             console.log("Max stock cycles reached.");
+        }
+    }
+
+    // 5. No moves left
+    console.log("No moves available.");
+    return null;
+}
+
+function startAnimation(move) {
+    if (!move) {
+        console.log("No move provided, skipping animation.");
+        scheduleNextAutoPlayMove();
+        return;
+    }
+    // Prevent starting a new animation if one is already running
+    if (currentAnimation && currentAnimation.cards && currentAnimation.cards.length > 0) {
+        console.log("Animation already in progress for:", currentAnimation.cards.map(c => c.value + c.suit).join(', '));
+        return; // Let the current animation finish
+    }
+    console.log(`Starting animation for move: ${move.type} (Priority: ${move.priority !== undefined ? move.priority : 'N/A'})`);
+
+    let cardToAnimate = null, stackToAnimate = null, startPos = {}, targetPos = {}, startPositions = [], targetPositions = [], onCompleteAction = () => {};
+    let moveMakesProgress = move.isProgress !== undefined ? move.isProgress : false;
+    let currentMoveDetails = { type: move.type };
+
+    // --- Draw ---
+    if (move.type === 'draw') {
+        console.log("Initiating draw from stock.");
+        if (stock.length > 0) {
+            cardToAnimate = stock.pop();
+            cardToAnimate.faceUp = true;
+            startPos = { x: MARGIN, y: MARGIN };
+            targetPos = { x: MARGIN + CARD_WIDTH + CARD_SPACING, y: MARGIN };
+            onCompleteAction = () => {
+                waste.push(cardToAnimate);
+                console.log(`Completed draw: ${cardToAnimate.value}${cardToAnimate.suit} to waste. Waste size: ${waste.length}`);
+                updateAutoPlayProgress(false);
+                lastAutoPlayMove = null;
+                moveHistory.push(`draw:${cardToAnimate.value}${cardToAnimate.suit}`);
+                if (moveHistory.length > MAX_HISTORY) moveHistory.shift();
+                scheduleNextAutoPlayMove();
+            };
+        } else {
+            console.log("Stock empty, cannot draw.");
+            scheduleNextAutoPlayMove();
+            return;
+        }
+    // --- Move to Foundation ---
+    } else if (move.type === 'moveToFoundation') {
+		const { card, source, targetFoundation } = move; // Use targetFoundation
+		cardToAnimate = card;
+		startPos = { x: card.x, y: card.y };
+		targetPos = { x: MARGIN + (targetFoundation + 3) * (CARD_WIDTH + CARD_SPACING), y: MARGIN };
+		const sourceType = source === waste ? 'waste' : (tableau.includes(source) ? `tableau pile ${tableau.indexOf(source)}` : 'unknown');
+		console.log(`Preparing to move ${card.value}${card.suit} from ${sourceType} to foundation ${targetFoundation}`);
+
+		// Remove card from source
+		if (source === waste) {
+			waste.pop();
+		} else if (tableau.includes(source)) {
+			const srcPileIdx = tableau.indexOf(source);
+			source.pop();
+			if (source.length > 0 && !source[source.length - 1].faceUp) {
+				source[source.length - 1].faceUp = true;
+				moveMakesProgress = true;
+				console.log(`Flipped card in tableau pile ${srcPileIdx}: ${source[source.length - 1].value}${source[source.length - 1].suit}`);
+			}
+		} else {
+			console.error("Unknown source for moveToFoundation:", source);
+			scheduleNextAutoPlayMove();
+			return;
+		}
+
+		onCompleteAction = () => {
+			foundations[targetFoundation].push(cardToAnimate); // Use targetFoundation
+			console.log(`Completed move: ${cardToAnimate.value}${cardToAnimate.suit} to foundation ${targetFoundation}. Foundation size: ${foundations[targetFoundation].length}`);
+			moveHistory.push(`moveToFoundation:${cardToAnimate.value}${cardToAnimate.suit}:f${targetFoundation}`);
+			if (moveHistory.length > MAX_HISTORY) moveHistory.shift();
+			checkWinCondition();
+			updateAutoPlayProgress(true);
+			lastAutoPlayMove = null;
+			scheduleNextAutoPlayMove();
+		};
+		    // --- Move (Waste) to Tableau ---
+	} else if (move.type === 'moveToTableau') {
+        const { card, source, targetPile } = move;
+        if (source !== waste) {
+            console.error("Invalid source for moveToTableau (expected waste):", source);
+            scheduleNextAutoPlayMove();
+            return;
+        }
+        cardToAnimate = card;
+        startPos = { x: card.x, y: card.y };
+        const pIdx = tableau.indexOf(targetPile);
+        targetPos = {
+            x: MARGIN + pIdx * (CARD_WIDTH + CARD_SPACING),
+            y: MARGIN + CARD_HEIGHT + CARD_SPACING + targetPile.length * 20
+        };
+        console.log(`Preparing to move ${card.value}${card.suit} from waste to tableau pile ${pIdx}`);
+
+        waste.pop();
+
+        onCompleteAction = () => {
+            targetPile.push(cardToAnimate);
+            console.log(`Completed move: ${cardToAnimate.value}${cardToAnimate.suit} to tableau pile ${pIdx}. Pile size: ${targetPile.length}`);
+            moveHistory.push(`moveToTableau:${cardToAnimate.value}${cardToAnimate.suit}:p${pIdx}`);
+            if (moveHistory.length > MAX_HISTORY) moveHistory.shift();
+            updateAutoPlayProgress(moveMakesProgress);
+            lastAutoPlayMove = null;
+            scheduleNextAutoPlayMove();
+        };
+    // --- Move Stack (Tableau) to Tableau ---
+    } else if (move.type === 'moveStackToTableau') {
+        const { stack, source, targetPile } = move;
+        if (!stack || stack.length === 0) {
+            console.error("Empty stack provided for moveStackToTableau");
+            scheduleNextAutoPlayMove();
+            return;
+        }
+        stackToAnimate = stack;
+        const srcIdx = tableau.indexOf(source);
+        const tgtIdx = tableau.indexOf(targetPile);
+        const stackLength = stack.length;
+        const startInSrc = source.indexOf(stack[0]);
+
+        if (startInSrc === -1) {
+            console.error(`Cannot find start of stack ${stack[0] ? stack[0].value + stack[0].suit : 'undefined'} in source pile ${srcIdx}`);
+            logGameState("Error state in moveStackToTableau start index");
+            scheduleNextAutoPlayMove();
+            return;
+        }
+
+        startPositions = stack.map(c => ({ x: c.x, y: c.y }));
+        const baseTX = MARGIN + tgtIdx * (CARD_WIDTH + CARD_SPACING);
+        const baseTY = MARGIN + CARD_HEIGHT + CARD_SPACING + targetPile.length * 20;
+        targetPositions = stack.map((_, i) => ({ x: baseTX, y: baseTY + i * 20 }));
+
+        console.log(`Preparing to move stack starting with ${stack[0] ? stack[0].value + stack[0].suit : 'unknown'} (size ${stackLength}) from tableau pile ${srcIdx} to pile ${tgtIdx}`);
+
+        source.splice(startInSrc, stackLength);
+        let flipped = false;
+        const flipCandidateIndex = startInSrc - 1;
+        if (flipCandidateIndex >= 0) {
+            if (source.length > flipCandidateIndex && source[flipCandidateIndex]) {
+                if (!source[flipCandidateIndex].faceUp) {
+                    source[flipCandidateIndex].faceUp = true;
+                    flipped = true;
+                    moveMakesProgress = true;
+                    console.log(`Flipped card in tableau pile ${srcIdx}: ${source[flipCandidateIndex].value}${source[flipCandidateIndex].suit}`);
+                }
+            } else {
+                console.warn(`Inconsistency Warning: flipCandidateIndex=${flipCandidateIndex} but source pile length is ${source.length}`);
+                logGameState("Warning state in moveStackToTableau flip check");
+            }
+        }
+
+        // Safeguard against undefined stack[0]
+        if (!stack[0]) {
+            console.error("Stack[0] is undefined after splice. Move details:", { srcIdx, tgtIdx, stackLength });
+            logGameState("Error state after splice in moveStackToTableau");
+            scheduleNextAutoPlayMove();
+            return;
+        }
+        currentMoveDetails = { 
+            type: 'moveStackToTableau', 
+            sourceIndex: srcIdx, 
+            targetIndex: tgtIdx, 
+            cardValue: stack[0].value, 
+            stackSize: stackLength 
+        };
+
+        onCompleteAction = () => {
+            stack.forEach(c => targetPile.push(c));
+            console.log(`Completed move: Stack of ${stackLength} card(s) starting with ${stack[0] ? stack[0].value + stack[0].suit : 'unknown'} to tableau pile ${tgtIdx}. Pile size: ${targetPile.length}${flipped ? ' (flipped card)' : ''}`);
+            moveHistory.push(`moveStackToTableau:${stack[0] ? stack[0].value + stack[0].suit : 'unknown'}:p${srcIdx}to${tgtIdx}`);
+            if (moveHistory.length > MAX_HISTORY) moveHistory.shift();
+            updateAutoPlayProgress(moveMakesProgress);
+            lastAutoPlayMove = currentMoveDetails;
+            scheduleNextAutoPlayMove();
+        };
+    // --- Flip Waste back to Stock ---
+    } else if (move.type === 'flipWasteToStock') {
+        console.log(`Initiating flip waste to stock. Waste size: ${waste.length}`);
+        let cardsToFlip = [];
+        while (waste.length > 0) {
+            cardsToFlip.push(waste.pop());
+        }
+        while (cardsToFlip.length > 0) {
+            const c = cardsToFlip.shift();
+            c.faceUp = false;
+            stock.push(c);
+        }
+        console.log(`Completed flip: Stock size now ${stock.length}`);
+        moveHistory.push(`flipWasteToStock`);
+        if (moveHistory.length > MAX_HISTORY) moveHistory.shift();
+        updateAutoPlayProgress(false);
+        lastAutoPlayMove = null;
+        scheduleNextAutoPlayMove();
         return;
     }
 
-    const cardToDrop = draggingStack[0];
-    let moveSuccessful = false;
+    // --- Setup and start the animation object ---
+    if (cardToAnimate || (stackToAnimate && stackToAnimate.length > 0)) {
+        currentAnimation = {
+            cards: stackToAnimate || [cardToAnimate],
+            startPositions: stackToAnimate ? startPositions : [startPos],
+            targetPositions: stackToAnimate ? targetPositions : [targetPos],
+            progress: 0,
+            onComplete: onCompleteAction
+        };
+    } else {
+        console.log("No cards identified for animation for move:", move.type);
+        if (move.type !== 'flipWasteToStock') {
+            scheduleNextAutoPlayMove();
+        }
+    }
+}
+        function updateAutoPlayProgress(progressMade) {
+            if (progressMade) {
+                movesWithoutProgress = 0;
+                stockCycles = 0;
+                lastWasteFlipState = -1;
+                console.log("Progress made, resetting unproductive moves counter.");
+            } else {
+                movesWithoutProgress++;
+                console.log(`Unproductive move, counter: ${movesWithoutProgress}/${MAX_UNPRODUCTIVE_MOVES}`);
+            }
+            if (movesWithoutProgress >= MAX_UNPRODUCTIVE_MOVES) {
+                console.log(`AutoPlay: Stopped - ${MAX_UNPRODUCTIVE_MOVES} unproductive moves.`);
+                logGameState("Stopped due to unproductive moves");
+                stopAutoPlay('stuck');
+            }
+        }
 
-    if (draggingStack.length === 1) {
-        for (let i = 0; i < 4; i++) {
-            const fx = MARGIN + (i + 3) * (CARD_WIDTH + CARD_SPACING);
-            const fy = MARGIN;
-            if (mouseX >= fx && mouseX <= fx + CARD_WIDTH && mouseY >= fy && mouseY <= fy + CARD_HEIGHT) {
-                if (canMoveToFoundation(cardToDrop, i)) {
-                    if (dragSource === waste) waste.pop();
-                    else if (foundations.includes(dragSource)) dragSource.pop();
-                    else if (tableau.includes(dragSource)) {
-                        dragSource.pop();
-                        if (dragSource.length > 0 && !dragSource[dragSource.length - 1].faceUp) {
-                            dragSource[dragSource.length - 1].faceUp = true;
-                        }
-                    }
-                    foundations[i].push(cardToDrop);
-                    cardToDrop.faceUp = true;
-                    checkWinCondition();
-                    moveSuccessful = true;
-                    break;
+        function scheduleNextAutoPlayMove() {
+            if (!isAutoPlaying) {
+                console.log("Auto-play not active, skipping move scheduling.");
+                return;
+            }
+            if (autoPlayTimeout) clearTimeout(autoPlayTimeout);
+            autoPlayTimeout = setTimeout(() => {
+                if (!isAutoPlaying) return;
+                console.log("Scheduling next auto-play move...");
+                const nextMove = findNextAutoMove();
+                if (nextMove) {
+                    startAnimation(nextMove);
+                } else {
+                    console.log("AutoPlay: No moves left.");
+                    stopAutoPlay(foundations.reduce((s, f) => s + f.length, 0) === 52 ? 'win' : 'stuck');
+                }
+            }, AUTO_PLAY_DELAY);
+        }
+
+        function stopAutoPlay(result) {
+            isAutoPlaying = false;
+            if (autoPlayButton) autoPlayButton.html('Auto Play');
+            if (autoPlayTimeout) clearTimeout(autoPlayTimeout);
+            autoPlayTimeout = null;
+            if (result) gameResult = result;
+            console.log(`AutoPlay stopped. Result: ${gameResult || "Manual stop"}`);
+            logGameState("After auto-play stop");
+            if (gameResult === 'stuck' || gameResult === 'win') displayGameResult();
+        }
+
+        // --- Core Game Setup and Drawing ---
+        function setup() {
+            canvas = createCanvas(820, 600);
+            canvas.parent('canvas-container');
+            textFont('Arial');
+            textAlign(CENTER, CENTER);
+            STACK_X = width / 2 - CARD_WIDTH / 2;
+            STACK_Y = height / 2 - CARD_HEIGHT / 2;
+            select('#new-game-button').mousePressed(triggerNewGameAnimation);
+            select('#solve-button').mousePressed(() => {
+                if (!isSolving && !isAnimatingNewGame && !isAutoPlaying) {
+                    gameResult = '';
+                    hideGameResult();
+                    isSolving = true;
+                }
+            });
+            autoPlayButton = select('#auto-play-button');
+            autoPlayButton.mousePressed(() => {
+                if (isAnimatingNewGame || isSolving) return;
+                if (isAutoPlaying) {
+                    stopAutoPlay('');
+                } else {
+                    console.log("Starting auto-play...");
+                    isAutoPlaying = true;
+                    autoPlayButton.html('Stop');
+                    gameResult = '';
+                    hideGameResult();
+                    movesWithoutProgress = 0;
+                    stockCycles = 0;
+                    lastWasteFlipState = waste.length;
+                    lastAutoPlayMove = null;
+                    logGameState("Before starting auto-play");
+                    scheduleNextAutoPlayMove();
+                }
+            });
+            startNewGame();
+            console.log("Game setup completed.");
+        }
+
+        function draw() {
+            background(TABLE_COLOR);
+            if (isAnimatingNewGame) {
+                animateNewGame();
+                return;
+            }
+            drawPlaceholders();
+            drawStock();
+            drawWaste();
+            drawFoundations();
+            drawTableau();
+            if (isDragging && draggingStack.length > 0) draggingStack.forEach((c, i) => drawCardAt(c, mouseX - dragOffset.x, mouseY - dragOffset.y + i * 20));
+            if (solvingCard) solvingCard.draw();
+            if (currentAnimation) {
+                const { cards, startPositions, targetPositions, progress } = currentAnimation;
+                const smoothP = (1 - cos(progress * PI)) / 2;
+                cards.forEach((c, i) => {
+                    c.x = lerp(startPositions[i].x, targetPositions[i].x, smoothP);
+                    c.y = lerp(startPositions[i].y, targetPositions[i].y, smoothP);
+                    c.draw();
+                });
+                currentAnimation.progress += 0.08;
+                if (progress >= 1) {
+                    cards.forEach((c, i) => {
+                        c.x = targetPositions[i].x;
+                        c.y = targetPositions[i].y;
+                    });
+                    const cb = currentAnimation.onComplete;
+                    currentAnimation = null;
+                    if (cb) cb();
+                }
+            }
+            select('#solve-button').elt.disabled = !(stock.length === 0 && waste.length === 0 && allTableauCardsFaceUp());
+            if (isSolving) updateSolvingAnimation();
+        }
+
+        function drawCardAt(card, x, y) {
+            const oX = card.x, oY = card.y, oR = card.animRotation;
+            card.x = x;
+            card.y = y;
+            card.animRotation = 0;
+            card.draw();
+            card.x = oX;
+            card.y = oY;
+            card.animRotation = oR;
+        }
+
+        // --- New Game Animation ---
+        function triggerNewGameAnimation() {
+            if (isAnimatingNewGame) return;
+            console.log("Triggering new game animation...");
+            isSolving = false;
+            solvingCard = null;
+            stopAutoPlay('');
+            hideGameResult();
+            isAnimatingNewGame = true;
+            animationPhase = 'flying_to_stack';
+            animationProgress = 0;
+            lastAutoPlayMove = null;
+            allCardsForAnimation = [];
+            stock.forEach(c => allCardsForAnimation.push(c));
+            waste.forEach(c => allCardsForAnimation.push(c));
+            foundations.forEach(p => p.forEach(c => allCardsForAnimation.push(c)));
+            tableau.forEach(p => p.forEach(c => allCardsForAnimation.push(c)));
+            if (allCardsForAnimation.length !== 52) {
+                console.warn("Card count error, creating fresh deck.");
+                allCardsForAnimation = SUITS.flatMap(s => VALUES.map(v => new Card(s, v, true)));
+                allCardsForAnimation.forEach(c => { c.x = MARGIN; c.y = MARGIN; });
+            }
+            allCardsForAnimation.forEach((c, i) => {
+                c.animStartX = c.x;
+                c.animStartY = c.y;
+                c.animStartRotation = c.animRotation;
+                c.stackOrder = i;
+                c.animTargetX = STACK_X + (i - 26) * STACK_OFFSET_AMOUNT;
+                c.animTargetY = STACK_Y + (i - 26) * STACK_OFFSET_AMOUNT;
+                c.animTargetRotation = random(-FLIGHT_ROTATION_AMOUNT, FLIGHT_ROTATION_AMOUNT);
+                c.faceUp = true;
+            });
+            shuffle(allCardsForAnimation, true);
+            stock = [];
+            waste = [];
+            foundations = [[], [], [], []];
+            tableau = [[], [], [], [], [], [], []];
+        }
+
+        function animateNewGame() {
+            background(TABLE_COLOR);
+            animationProgress += NEW_GAME_ANIM_SPEED;
+            animationProgress = min(animationProgress, 1);
+            allCardsForAnimation.forEach(c => {
+                c.updateAnimation();
+                c.draw();
+            });
+            if (animationProgress >= 1) {
+                if (animationPhase === 'flying_to_stack') {
+                    animationPhase = 'dealing_from_stack';
+                    animationProgress = 0;
+                    startNewGame(true);
+                    allCardsForAnimation.forEach(c => {
+                        c.animStartX = c.x;
+                        c.animStartY = c.y;
+                        c.animStartRotation = c.animRotation;
+                        c.animTargetX = c.finalGameX;
+                        c.animTargetY = c.finalGameY;
+                        c.animTargetRotation = 0;
+                    });
+                } else if (animationPhase === 'dealing_from_stack') {
+                    isAnimatingNewGame = false;
+                    animationPhase = 'none';
+                    finalizeNewGameState();
                 }
             }
         }
-    }
 
-    if (!moveSuccessful) {
-        for (let i = 0; i < 7; i++) {
-            const tx = MARGIN + i * (CARD_WIDTH + CARD_SPACING);
-            const pile = tableau[i];
-            const targetY = MARGIN + CARD_HEIGHT + CARD_SPACING + max(0, (pile.length - 1)) * 20;
-            const targetHeight = pile.length === 0 ? CARD_HEIGHT : CARD_HEIGHT + 20;
+        function finalizeNewGameState() {
+            allCardsForAnimation.forEach(c => {
+                c.x = c.finalGameX;
+                c.y = c.finalGameY;
+                c.animRotation = 0;
+            });
+            stock.forEach(c => c.faceUp = false);
+            waste.forEach(c => c.faceUp = true);
+            tableau.forEach(p => p.forEach((c, j) => c.faceUp = (j === p.length - 1)));
+            foundations.forEach(p => p.forEach(c => c.faceUp = true));
+            allCardsForAnimation = [];
+            console.log("New game finalized.");
+            logGameState("After new game");
+        }
 
-            if (mouseX >= tx && mouseX <= tx + CARD_WIDTH && mouseY >= targetY && mouseY <= targetY + targetHeight) {
-                if (canMoveToTableau(cardToDrop, i)) {
-                    if (dragSource === waste) waste.pop();
-                    else if (foundations.includes(dragSource)) dragSource.pop();
-                    else if (tableau.includes(dragSource)) {
-                        const startIndex = dragSource.indexOf(cardToDrop);
-                        dragSource.splice(startIndex, draggingStack.length);
-                        if (dragSource.length > 0 && !dragSource[dragSource.length - 1].faceUp) {
-                            dragSource[dragSource.length - 1].faceUp = true;
-                        }
-                    }
-                    draggingStack.forEach(card => tableau[i].push(card));
-                    moveSuccessful = true;
-                    break;
+        // --- Drawing Helpers ---
+        function drawPlaceholders() {
+            fill(16, 74, 28, 150);
+            noStroke();
+            rect(MARGIN, MARGIN, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
+            rect(MARGIN + CARD_WIDTH + CARD_SPACING, MARGIN, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
+            for (let i = 0; i < 4; i++) rect(MARGIN + (i + 3) * (CARD_WIDTH + CARD_SPACING), MARGIN, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
+            for (let i = 0; i < 7; i++) rect(MARGIN + i * (CARD_WIDTH + CARD_SPACING), MARGIN + CARD_HEIGHT + CARD_SPACING, CARD_WIDTH, CARD_HEIGHT, BORDER_RADIUS);
+            stroke(0);
+        }
+
+        function drawStock() {
+            if (stock.length > 0 && !isAnimatingNewGame) {
+                const c = stock[stock.length - 1];
+                c.x = MARGIN;
+                c.y = MARGIN;
+                c.draw();
+            }
+        }
+
+        function drawWaste() {
+            if (waste.length > 0 && !isCardInAnimation(waste[waste.length - 1]) && !isAnimatingNewGame) {
+                const c = waste[waste.length - 1];
+                c.x = MARGIN + CARD_WIDTH + CARD_SPACING;
+                c.y = MARGIN;
+                c.draw();
+            }
+        }
+
+        function drawFoundations() {
+            foundations.forEach((p, i) => {
+                if (p.length > 0 && !isCardInAnimation(p[p.length - 1]) && !isAnimatingNewGame) {
+                    const c = p[p.length - 1];
+                    c.x = MARGIN + (i + 3) * (CARD_WIDTH + CARD_SPACING);
+                    c.y = MARGIN;
+                    c.draw();
                 }
+            });
+        }
+
+        function drawTableau() {
+            tableau.forEach((p, i) => {
+                p.forEach((c, j) => {
+                    if (!isAnimatingNewGame) {
+                        c.x = MARGIN + i * (CARD_WIDTH + CARD_SPACING);
+                        c.y = MARGIN + CARD_HEIGHT + CARD_SPACING + j * 20;
+                        if (!isCardBeingDragged(c) && !isCardInAnimation(c)) c.draw();
+                    }
+                });
+            });
+        }
+
+        // --- Utility Functions ---
+        function isCardBeingDragged(card) {
+            return isDragging && draggingStack.includes(card);
+        }
+
+        function isCardInAnimation(card) {
+            return currentAnimation && currentAnimation.cards.includes(card);
+        }
+
+        function displayGameResult() {
+            const o = select('#game-result-overlay'), m = select('#game-result-message');
+            if (o && m && gameResult) {
+                let msg = '';
+                switch (gameResult) {
+                    case 'win': msg = 'Congratulations! You Win!'; break;
+                    case 'stuck': msg = 'No more moves!'; break;
+                    default: msg = 'Game Over';
+                }
+                m.html(msg);
+                o.style('display', 'flex');
             }
         }
-    }
 
-    selectedCard = null;
-    draggingStack = [];
-    dragSource = null;
-    isDragging = false;
-}
-
-function keyPressed() {
-    if (isAnimatingNewGame) return;
-
-    if (key === 'n' || key === 'N') {
-        triggerNewGameAnimation();
-    }
-    if (key === 's' || key === 'S') {
-        if (!gameResult && stock.length === 0 && waste.length === 0 && allTableauCardsFaceUp()) {
-            gameResult = '';
-            isSolving = true;
+        function hideGameResult() {
+            const o = select('#game-result-overlay');
+            if (o) o.style('display', 'none');
         }
-    }
-}
 
-function allTableauCardsFaceUp() {
-    return tableau.every(pile => pile.every(card => card.faceUp));
-}
-
-function findMovableCard() {
-    if(waste.length > 0) {
-        const card = waste[waste.length - 1];
-        for (let j = 0; j < 4; j++) {
-            if (canMoveToFoundation(card, j)) {
-                return { card, foundationIndex: j, sourcePile: waste };
-            }
-        }
-    }
+function startNewGame(isCalledForAnimation = false) {
+    console.log("Starting new game...");
+    gameResult = '';
+    hideGameResult();
+    isSolving = false;
+    solvingCard = null;
+    stopAutoPlay('');
+    movesWithoutProgress = 0;
+    stockCycles = 0;
+    lastWasteFlipState = -1;
+    lastAutoPlayMove = null;
+    moveHistory = []; // Reset move history
+    let deck = isCalledForAnimation ? [...allCardsForAnimation] : shuffle(SUITS.flatMap(s => VALUES.map(v => new Card(s, v))), true);
+    stock = [];
+    waste = [];
+    foundations = [[], [], [], []];
+    tableau = [[], [], [], [], [], [], []];
     for (let i = 0; i < 7; i++) {
-        if (tableau[i].length > 0) {
-            const card = tableau[i][tableau[i].length - 1];
-            if (card.faceUp) {
-                for (let j = 0; j < 4; j++) {
-                    if (canMoveToFoundation(card, j)) {
-                        return { card, foundationIndex: j, sourcePile: tableau[i] };
+        for (let j = 0; j <= i; j++) {
+            if (deck.length > 0) {
+                const c = deck.pop();
+                c.faceUp = !isCalledForAnimation && (j === i);
+                tableau[i].push(c);
+            } else break;
+        }
+    }
+    stock = [...deck];
+    stock.forEach(c => {
+        const x = MARGIN, y = MARGIN;
+        if (isCalledForAnimation) {
+            c.finalGameX = x;
+            c.finalGameY = y;
+            c.x = c.animTargetX;
+            c.y = c.animTargetY;
+        } else {
+            c.x = x;
+            c.y = y;
+            c.faceUp = false;
+        }
+    });
+    tableau.forEach((p, i) => {
+        p.forEach((c, j) => {
+            const x = MARGIN + i * (CARD_WIDTH + CARD_SPACING), y = MARGIN + CARD_HEIGHT + CARD_SPACING + j * 20;
+            if (isCalledForAnimation) {
+                c.finalGameX = x;
+                c.finalGameY = y;
+                c.x = c.animTargetX;
+                c.y = c.animTargetY;
+            } else {
+                c.x = x;
+                c.y = y;
+            }
+        });
+    });
+    if (isCalledForAnimation) {
+        allCardsForAnimation = [];
+        stock.forEach(c => allCardsForAnimation.push(c));
+        tableau.forEach(p => p.forEach(c => allCardsForAnimation.push(c)));
+    }
+    logGameState("After new game setup");
+}
+
+        // --- Solving Animation ---
+        function updateSolvingAnimation() {
+            if (isSolving && !solvingCard) {
+                const m = findMovableCardForSolve();
+                if (m) {
+                    const { card, foundationIndex: fi, sourcePile: sp } = m;
+                    if (sp === waste) waste.pop();
+                    else if (tableau.includes(sp)) {
+                        sp.pop();
+                        if (sp.length > 0 && !sp[sp.length - 1].faceUp) sp[sp.length - 1].faceUp = true;
+                    } else {
+                        console.error("Solve source error");
+                        isSolving = false;
+                        return;
                     }
+                    solvingCard = card;
+                    solvingFoundationIndex = fi;
+                    targetX = MARGIN + (fi + 3) * (CARD_WIDTH + CARD_SPACING);
+                    targetY = MARGIN;
+                } else {
+                    isSolving = false;
+                    checkWinCondition();
+                    if (gameResult !== 'win') gameResult = 'stuck';
+                    displayGameResult();
+                }
+            }
+            if (solvingCard) {
+                let dx = targetX - solvingCard.x, dy = targetY - solvingCard.y, dist = sqrt(dx * dx + dy * dy);
+                if (dist < SOLVE_SPEED) {
+                    solvingCard.x = targetX;
+                    solvingCard.y = targetY;
+                    foundations[solvingFoundationIndex].push(solvingCard);
+                    solvingCard.faceUp = true;
+                    solvingCard = null;
+                    checkWinCondition();
+                    if (gameResult === 'win') {
+                        isSolving = false;
+                        displayGameResult();
+                    }
+                } else {
+                    solvingCard.x += (dx / dist) * SOLVE_SPEED;
+                    solvingCard.y += (dy / dist) * SOLVE_SPEED;
                 }
             }
         }
+
+        // --- User Input Handling ---
+        function mousePressed() {
+            if (isSolving || isAnimatingNewGame || isAutoPlaying || currentAnimation) return;
+            hideGameResult();
+            const now = millis(), dt = now - lastClickTime;
+            let clickInfo = findClickedCard(mouseX, mouseY);
+            if (clickInfo && clickInfo.card.faceUp && lastClickedCard === clickInfo.card && dt < DOUBLE_CLICK_DELAY) {
+                let src = clickInfo.source, top = (src === waste && waste.length > 0 && waste[waste.length - 1] === clickInfo.card) || (tableau.includes(src) && src.length > 0 && src[src.length - 1] === clickInfo.card);
+                if (top && attemptMoveToFoundation(clickInfo.card, src)) {
+                    lastClickedCard = null;
+                    return;
+                }
+            }
+            lastClickTime = now;
+            lastClickedCard = clickInfo ? clickInfo.card : null;
+            const sx = MARGIN, sy = MARGIN;
+            if (mouseX >= sx && mouseX <= sx + CARD_WIDTH && mouseY >= sy && mouseY <= sy + CARD_HEIGHT) {
+                if (stock.length > 0) {
+                    const c = stock.pop();
+                    c.faceUp = true;
+                    waste.push(c);
+                } else if (waste.length > 0) {
+                    while (waste.length > 0) {
+                        const c = waste.pop();
+                        c.faceUp = false;
+                        stock.push(c);
+                    }
+                }
+                return;
+            }
+            if (clickInfo && clickInfo.card.faceUp) {
+                selectedCard = clickInfo.card;
+                dragSource = clickInfo.source;
+                dragOffset.x = mouseX - selectedCard.x;
+                dragOffset.y = mouseY - selectedCard.y;
+                if (tableau.includes(dragSource)) {
+                    const idx = dragSource.indexOf(selectedCard);
+                    if (idx !== -1) {
+                        draggingStack = dragSource.slice(idx);
+                        isDragging = true;
+                    } else draggingStack = [];
+                } else if (dragSource === waste && waste.length > 0 && waste[waste.length - 1] === selectedCard) {
+                    draggingStack = [selectedCard];
+                    isDragging = true;
+                } else if (foundations.includes(dragSource) && dragSource.length > 0 && dragSource[dragSource.length - 1] === selectedCard) {
+                    draggingStack = [selectedCard];
+                    isDragging = true;
+                } else {
+                    draggingStack = [];
+                    isDragging = false;
+                    selectedCard = null;
+                }
+            } else {
+                selectedCard = null;
+                draggingStack = [];
+                isDragging = false;
+            }
+        }
+
+        function findClickedCard(px, py) {
+            for (let i = 6; i >= 0; i--) {
+                const p = tableau[i];
+                for (let j = p.length - 1; j >= 0; j--) {
+                    const c = p[j];
+                    const bY = c.y + (j === p.length - 1 ? CARD_HEIGHT : 20);
+                    if (px >= c.x && px <= c.x + CARD_WIDTH && py >= c.y && py <= bY) {
+                        if (c.faceUp) return { card: c, source: p };
+                        else return null;
+                    }
+                }
+            }
+            for (let i = 0; i < 4; i++) {
+                const p = foundations[i];
+                if (p.length > 0) {
+                    const c = p[p.length - 1];
+                    if (c.containsPoint(px, py)) return { card: c, source: p };
+                }
+            }
+            if (waste.length > 0) {
+                const c = waste[waste.length - 1];
+                if (c.containsPoint(px, py)) return { card: c, source: waste };
+            }
+            return null;
+        }
+
+        function attemptMoveToFoundation(card, source) {
+            for (let i = 0; i < 4; i++) {
+                if (canMoveToFoundation(card, i)) {
+                    if (source === waste) waste.pop();
+                    else if (tableau.includes(source)) {
+                        source.pop();
+                        if (source.length > 0 && !source[source.length - 1].faceUp) source[source.length - 1].faceUp = true;
+                    } else return false;
+                    foundations[i].push(card);
+                    card.faceUp = true;
+                    checkWinCondition();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function canMoveToFoundation(card, fi) {
+            if (fi < 0 || fi >= 4) return false;
+            const f = foundations[fi];
+            if (f.length === 0) return card.value === 'A';
+            const top = f[f.length - 1], cIdx = VALUES.indexOf(top.value), nIdx = cIdx + 1;
+            return card.suit === top.suit && nIdx < VALUES.length && card.value === VALUES[nIdx];
+        }
+
+    function getCardValue(card) {
+        const values = {
+            'A': 1,
+            '2': 2,
+            '3': 3,
+            '4': 4,
+            '5': 5,
+            '6': 6,
+            '7': 7,
+            '8': 8,
+            '9': 9,
+            '10': 10,
+            'J': 11,
+            'Q': 12,
+            'K': 13
+        };
+        return values[card.value];
     }
-    return null;
+
+function isOppositeColor(card1, card2) {
+    const redSuits = ['♥', '♦'];
+    const blackSuits = ['♠', '♣'];
+    const color1 = redSuits.includes(card1.suit) ? 'red' : 'black';
+    const color2 = redSuits.includes(card2.suit) ? 'red' : 'black';
+    return color1 !== color2;
 }
-</script>
+function canMoveToTableau(card, pileIndex) {
+    const pile = tableau[pileIndex];
+    if (pile.length === 0) return card.value === 'K'; // King to empty pile
+    const topCard = pile[pile.length - 1];
+    return topCard.faceUp && 
+           isOppositeColor(card, topCard) && 
+           getCardValue(topCard) === getCardValue(card) + 1;
+}
+
+        function checkWinCondition() {
+            const count = foundations.reduce((s, p) => s + p.length, 0);
+            if (count === 52) {
+                gameResult = 'win';
+                isSolving = false;
+                stopAutoPlay('win');
+                displayGameResult();
+            }
+        }
+
+        function mouseReleased() {
+            if (!isDragging || draggingStack.length === 0 || isSolving || isAnimatingNewGame || isAutoPlaying || currentAnimation) {
+                isDragging = false;
+                draggingStack = [];
+                return;
+            }
+            const dropCard = draggingStack[0];
+            let success = false;
+            if (draggingStack.length === 1) {
+                for (let i = 0; i < 4; i++) {
+                    const fx = MARGIN + (i + 3) * (CARD_WIDTH + CARD_SPACING), fy = MARGIN;
+                    if (mouseX >= fx && mouseX <= fx + CARD_WIDTH && mouseY >= fy && mouseY <= fy + CARD_HEIGHT) {
+                        if (canMoveToFoundation(dropCard, i)) {
+                            if (dragSource === waste) waste.pop();
+                            else if (foundations.includes(dragSource)) dragSource.pop();
+                            else if (tableau.includes(dragSource)) {
+                                dragSource.pop();
+                                if (dragSource.length > 0 && !dragSource[dragSource.length - 1].faceUp) dragSource[dragSource.length - 1].faceUp = true;
+                            }
+                            foundations[i].push(dropCard);
+                            dropCard.faceUp = true;
+                            checkWinCondition();
+                            success = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!success) {
+                for (let i = 0; i < 7; i++) {
+                    const p = tableau[i], tx = MARGIN + i * (CARD_WIDTH + CARD_SPACING), tyAreaStart = MARGIN + CARD_HEIGHT + CARD_SPACING, tyAreaEnd = height;
+                    if (mouseX >= tx && mouseX <= tx + CARD_WIDTH && mouseY >= tyAreaStart && mouseY <= tyAreaEnd) {
+                        if (canMoveToTableau(dropCard, i)) {
+                            if (dragSource === waste) waste.pop();
+                            else if (foundations.includes(dragSource)) dragSource.pop();
+                            else if (tableau.includes(dragSource)) {
+                                const idx = dragSource.indexOf(dropCard);
+                                if (idx !== -1) {
+                                    dragSource.splice(idx, draggingStack.length);
+                                    if (dragSource.length > 0 && idx > 0 && !dragSource[idx - 1].faceUp) dragSource[idx - 1].faceUp = true;
+                                }
+                            }
+                            draggingStack.forEach(c => p.push(c));
+                            success = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            selectedCard = null;
+            draggingStack = [];
+            dragSource = null;
+            isDragging = false;
+        }
+
+        function keyPressed() {
+            if (isAnimatingNewGame) return;
+            if (key === 'n' || key === 'N') triggerNewGameAnimation();
+            else if (key === 's' || key === 'S') {
+                const sb = select('#solve-button');
+                if (sb && !sb.elt.disabled && !isSolving && !isAutoPlaying) {
+                    gameResult = '';
+                    hideGameResult();
+                    isSolving = true;
+                }
+            }
+        }
+
+        function allTableauCardsFaceUp() {
+            return tableau.every(p => p.every(c => c.faceUp));
+        }
+
+        function findMovableCardForSolve() {
+            if (waste.length > 0) {
+                const c = waste[waste.length - 1];
+                for (let j = 0; j < 4; j++) if (canMoveToFoundation(c, j)) return { card: c, foundationIndex: j, sourcePile: waste };
+            }
+            for (let i = 0; i < 7; i++) {
+                const p = tableau[i];
+                if (p.length > 0) {
+                    const c = p[p.length - 1];
+                    for (let j = 0; j < 4; j++) if (canMoveToFoundation(c, j)) return { card: c, foundationIndex: j, sourcePile: p };
+                }
+            }
+            return null;
+        }
+
+        function shuffle(a, useP5 = false) {
+            let i = a.length, r;
+            const rnd = useP5 ? random : Math.random;
+            while (i !== 0) {
+                r = Math.floor(rnd() * i);
+                i--;
+                [a[i], a[r]] = [a[r], a[i]];
+            }
+            return a;
+        }
     </script>
 </body>
 </html>
