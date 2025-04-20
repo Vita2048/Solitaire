@@ -18,9 +18,9 @@
 <body>
     <div id="game-container">
         <div id="buttons">
-            <button id="new-game-button">New Game (N)</button>
+            <button id="new-game-button">New Game</button>
             <button id="auto-play-button">Auto Play</button>
-            <button id="solve-button" disabled>Solve (S)</button>
+            <button id="solve-button" disabled>Solve</button>
         </div>
         <div id="canvas-container"></div>
         <div id="game-result-overlay"><div id="game-result-message"></div></div>
@@ -699,7 +699,7 @@ function startAnimation(move) {
 
         // --- Core Game Setup and Drawing ---
         function setup() {
-            canvas = createCanvas(820, 600);
+            canvas = createCanvas(818, 700);
             canvas.parent('canvas-container');
             textFont('Arial');
             textAlign(CENTER, CENTER);
@@ -1262,19 +1262,6 @@ function canMoveToTableau(card, pileIndex) {
             draggingStack = [];
             dragSource = null;
             isDragging = false;
-        }
-
-        function keyPressed() {
-            if (isAnimatingNewGame) return;
-            if (key === 'n' || key === 'N') triggerNewGameAnimation();
-            else if (key === 's' || key === 'S') {
-                const sb = select('#solve-button');
-                if (sb && !sb.elt.disabled && !isSolving && !isAutoPlaying) {
-                    gameResult = '';
-                    hideGameResult();
-                    isSolving = true;
-                }
-            }
         }
 
         function allTableauCardsFaceUp() {
